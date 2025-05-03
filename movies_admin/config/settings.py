@@ -30,7 +30,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-
 include(
     'components/database.py',
     'components/apps.py',
@@ -39,3 +38,7 @@ include(
     'components/auth.py',
     'components/internationalization.py',
 ) 
+
+INTERNAL_IPS = [
+    '127.0.0.1',
+]
