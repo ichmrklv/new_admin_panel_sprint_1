@@ -8,7 +8,7 @@ from typing import List
 
 import psycopg2
 from dotenv import load_dotenv
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,25 +66,23 @@ def postgres_conn_context(dsl: dict):
 
 
 class SQLiteLoader:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: psycopg2.extensions.connection):
         self.conn = connection
 
     def load_data(self, table: str, batch_size: int = 1000):
-        """Loads data from SQLite with batch selection"""
         try:
             cursor = self.conn.cursor()
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             total_rows = cursor.fetchone()[0]
             logger.info(f"Table {table} contains {total_rows} records.")
             # Loading data in batches
-            offset = 0
-            while offset < total_rows:
-                cursor.execute(
-                    f"SELECT * FROM {table} "
-                    f"LIMIT {batch_size} OFFSET {offset}"
-                    )
-                yield cursor.fetchall()
-                offset += batch_size
+            cursor.execute(f"SELECT * FROM {table}")
+            while True:
+                batch = cursor.fetchmany(batch_size)
+                if not batch:
+                    break
+                yield batch
+
         except Exception as e:
             logger.error(f"Error reading from table {table}: {e}")
 
@@ -94,111 +92,165 @@ class PostgresSaver:
         self.conn = conn
 
     def save_persons(self, data: List[sqlite3.Row]):
+        if not data:
+            return
+
         cursor = self.conn.cursor()
-        for row in data:
-            try:
-                cursor.execute("""
-                    INSERT INTO person (id, full_name, created, modified)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """, (
+        try:
+            values = [
+                (
                     row['id'],
                     row['full_name'],
                     row['created'] or datetime.now(),
                     row['modified'] or datetime.now()
-                    ))
-            except Exception as e:
-                logger.warning(f"Error inserting person {row['id']}: {e}")
-        self.conn.commit()
+                )
+                for row in data
+            ]
+
+            insert_query = """
+                INSERT INTO person (id, full_name, created, modified)
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """
+
+            execute_values(cursor, insert_query, values)
+            self.conn.commit()
+
+        except Exception as e:
+            logger.warning(f"Error inserting batch of persons: {e}")
+            self.conn.rollback()
 
     def save_genres(self, data: List[sqlite3.Row]):
+        if not data:
+            return
+
         cursor = self.conn.cursor()
-        for row in data:
-            try:
-                cursor.execute("""
-                    INSERT INTO genre (
-                               id, name, description, created, modified
-                               )
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """, (
-                    row['id'], row['name'], row['description'],
+        try:
+            values = [
+                (
+                    row['id'],
+                    row['name'],
+                    row['description'],
                     row['created'] or datetime.now(),
                     row['modified'] or datetime.now()
-                    ))
-            except Exception as e:
-                logger.warning(f"Error inserting genre {row['id']}: {e}")
-        self.conn.commit()
+                )
+                for row in data
+            ]
+
+            insert_query = """
+                INSERT INTO genre (id, name, description, created, modified)
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """
+
+            execute_values(cursor, insert_query, values)
+            self.conn.commit()
+
+        except Exception as e:
+            logger.warning(f"Error inserting batch of genres: {e}")
+            self.conn.rollback()
 
     def save_film_works(self, data: List[sqlite3.Row]):
+        if not data:
+            return
+
         cursor = self.conn.cursor()
-        for row in data:
-            rating = row['rating'] if row['rating'] is not None else 0.0
-            try:
-                cursor.execute("""
-                    INSERT INTO film_work (
-                        id, title, description, creation_date, file_path,
-                        rating, type, created, modified
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """, (
-                    row['id'], row['title'], row['description'],
-                    row['creation_date'], row['file_path'],
-                    rating, row['type'],
+        try:
+            values = [
+                (
+                    row['id'],
+                    row['title'],
+                    row['description'],
+                    row['creation_date'],
+                    row['file_path'],
+                    row['rating'] if row['rating'] is not None else 0.0,
+                    row['type'],
                     row['created'] or datetime.now(),
                     row['modified'] or datetime.now()
-                    ))
-            except Exception as e:
-                logger.warning(f"Error inserting film_work {row['id']}: {e}")
-        self.conn.commit()
+                )
+                for row in data
+            ]
+
+            insert_query = """
+                INSERT INTO film_work (
+                    id, title, description, creation_date, file_path,
+                    rating, type, created, modified
+                )
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """
+
+            execute_values(cursor, insert_query, values)
+            self.conn.commit()
+
+        except Exception as e:
+            logger.warning(f"Error inserting batch of film_works: {e}")
+            self.conn.rollback()
 
     def save_person_film_work(self, data: List[sqlite3.Row]):
+        if not data:
+            return
+
         cursor = self.conn.cursor()
-        for row in data:
-            created = (
-                row['created'] if row['created'] is not None
-                else datetime.now()
+        try:
+            values = [
+                (
+                    row['id'],
+                    row['role'],
+                    (row['created'] if row['created'] is not None
+                     else datetime.now()),
+                    row['film_work_id'],
+                    row['person_id']
                 )
-            try:
-                cursor.execute("""
-                    INSERT INTO person_film_work (
-                        id, role, created, film_work_id, person_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """, (
-                    row['id'], row['role'], created,
-                    row['film_work_id'], row['person_id']
-                    ))
-            except Exception as e:
-                logger.warning(
-                    f"Error inserting person_film_work {row['id']}: {e}"
+                for row in data
+            ]
+
+            insert_query = """
+                INSERT INTO person_film_work (
+                    id, role, created, film_work_id, person_id
                 )
-        self.conn.commit()
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """
+
+            execute_values(cursor, insert_query, values)
+            self.conn.commit()
+
+        except Exception as e:
+            logger.warning(f"Error inserting batch of person_film_work: {e}")
+            self.conn.rollback()
 
     def save_genre_film_work(self, data: List[sqlite3.Row]):
+        if not data:
+            return
+
         cursor = self.conn.cursor()
-        for row in data:
-            if row['created'] is not None:
-                created = row['created']
-            else:
-                created = datetime.now()
-            try:
-                cursor.execute("""
-                    INSERT INTO genre_film_work (
-                        id, created, film_work_id, genre_id
-                    )
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                """, (
-                    row['id'], created, row['film_work_id'], row['genre_id']
-                ))
-            except Exception as e:
-                logger.warning(
-                    f"Error inserting genre_film_work {row['id']}: {e}"
+        try:
+            values = [
+                (
+                    row['id'],
+                    (row['created'] if row['created'] is not None
+                     else datetime.now()),
+                    row['film_work_id'],
+                    row['genre_id']
                 )
-        self.conn.commit()
+                for row in data
+            ]
+
+            insert_query = """
+                INSERT INTO genre_film_work (
+                    id, created, film_work_id, genre_id
+                )
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING
+            """
+
+            execute_values(cursor, insert_query, values)
+            self.conn.commit()
+
+        except Exception as e:
+            logger.warning(f"Error inserting batch of genre_film_work: {e}")
+            self.conn.rollback()
 
 
 def load_from_sqlite(
