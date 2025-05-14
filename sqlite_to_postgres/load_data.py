@@ -1,13 +1,14 @@
+import logging
 import os
 import sqlite3
-from datetime import datetime
-import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List
-from psycopg2.extras import RealDictCursor
+
 import psycopg2
 from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
